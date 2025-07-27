@@ -25,20 +25,3 @@ if(ENABLE_TEST_CKTEXT)
     add_executable(test_cktext main.cpp)
     target_link_libraries(test_cktext PRIVATE cktext)
 endif()
-
-install(
-    TARGETS
-        cktext
-    RUNTIME
-        COMPONENT Runtime
-        DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
-    ARCHIVE
-        COMPONENT Development
-        DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
-)
-install(
-    FILES
-        text.h
-        var.hpp
-    DESTINATION ${CMAKE_INSTALL_PREFIX}/include/cktext
-)
