@@ -39,6 +39,119 @@ using namespace ck::bio;
 using u8str = Text::u8str;
 using u32str =  Text::u32str;
 
+template<typename Rd>
+struct reader : bio::ireader
+{
+    inline reader(Rd* rd) :
+        _rd(rd),
+        _rdb(nullptr)
+    {
+    }
+
+    using Rdb = bio::reader<bio::Buffer>;
+    inline void attach(Rdb* rdb) {
+        _rd = nullptr;
+        _rdb = rdb;
+    }
+
+    inline size_t read(uint8_t* data, size_t capacity) override {
+        if (_rdb)
+            return _rdb->read(data, capacity);
+        else if (_rd)
+            return _rd->read(data, capacity);
+        return 0;
+    }
+
+    inline size_t seek(pos_t pos) override {
+        if (_rdb)
+            return _rdb->seek(pos);
+        else if (_rd)
+            return _rd->seek(pos);
+        return 0;
+    }
+
+    inline size_t pos() const override {
+        if (_rdb)
+            return _rdb->pos();
+        else if (_rd)
+            return _rd->pos();
+        return 0;
+    }
+
+    inline size_t offset(pos_t ofs) override
+    {
+        if (_rd) return _rd->offset(ofs);
+        else if (_rdb) return _rdb->offset(ofs);
+        return 0;
+    }
+
+    template<typename T>
+    inline size_t read(T* data, size_t size)
+    {
+        return read((uint8_t*)data, size);
+    }
+private:
+    Rd* _rd = nullptr;
+    Rdb* _rdb = nullptr;
+};
+
+using ctx_compress = lz4xx::context<lz4xx::Compress>;
+struct writer
+{
+    inline writer(std::ofstream* so)
+        : _so(so),_ctx(nullptr)
+    {}
+    inline void attach(ctx_compress* ctx) {
+        _so = nullptr;
+        _ctx = ctx;
+    }
+
+    inline bool write(const uint8_t *data, size_t size){
+        if(_ctx)
+            return _ctx->update(data,size);
+        else if(_so)
+        {
+            const auto before = _so->tellp();
+            _so->write((char*)data,size);
+            return _so->tellp() - before == size;    // 真实写入大小不能小于输入数据大小
+        }
+        return false;
+    }
+
+    template<typename T>
+    inline bool write(const T* data,size_t size)
+    {
+        return write((uint8_t*)data,size);
+    }
+
+private:
+    std::ofstream* _so = nullptr;
+    ctx_compress* _ctx = nullptr;
+};
+
+// 在析构时删除目标文件
+struct temp_guard
+{
+    temp_guard() = default;
+    inline temp_guard(const std::string& path)
+        : _path(path)
+    {}
+
+    inline ~temp_guard()
+    {
+        if(!_path.empty())
+        {
+            std::error_code ec;
+            fs::remove(_path,ec);
+        }
+    }
+
+    inline void set(const std::string& path)
+    { _path = path; }
+private:
+    std::string _path;
+};
+
 int read_str(ireader& rd, std::string& out)
 {
     int sz = 0;
@@ -134,12 +247,12 @@ bool read(ireader& rd, Text::Property& o)
     return true;
 }
 
-void write(std::ofstream& fo, const Text::Property& o)
+void write(ck::writer& wt, const Text::Property& o)
 {
-    auto write_str = [&fo](const std::string& str) {
+    auto write_str = [&wt](const std::string& str) {
         auto sz = (int)str.size();
-        fo.write((char*)&sz, 1);
-        fo.write(str.c_str(), sz);
+        wt.write(&sz, 1);
+        wt.write(str.c_str(), sz);
     };
 
     for (auto& it : o)
@@ -147,35 +260,34 @@ void write(std::ofstream& fo, const Text::Property& o)
         const auto type = it.second.type();
         if (type == var::TP_NUL)
             continue;
-        // 写类型
-        fo.write((char*)&type, 1);
 
         // 检查名称长度, 超长忽略
         const auto& name = it.first;
         if (name.empty() || name.size() > 64)
-        {
-            fo.seekp(-1, std::ios::cur);
-            return;
-        }
+            continue;
+
+        // 写类型
+        wt.write(&type, 1);
         // 写名称
         write_str(name);
+        // 写值
         switch (type) {
         case var::TP_BOOL:
         {
             bool v = it.second;
-            fo.write((char*)&v, 1);
+            wt.write((uint8_t*)&v, 1);
         }
         break;
         case var::TP_INT:
         {
             int v = it.second;
-            fo.write((char*)&v, 4);
+            wt.write((uint8_t*)&v, 4);
         }
         break;
         case var::TP_FLOAT:
         {
             float v = it.second;
-            fo.write((char*)&v, 4);
+            wt.write((uint8_t*)&v, 4);
         }
         break;
         case var::TP_STRING:
@@ -256,62 +368,6 @@ void CKT_CALL Text::u16to32(u16str in, std::u32string &out)
 {
     __u16to32<char16_t>(in, out);
 }
-
-template<typename Rd>
-struct reader : bio::ireader
-{
-    inline reader(Rd* rd) :
-        _rd(rd),
-        _rdb(nullptr)
-    {
-    }
-
-    using Rdb = bio::reader<bio::Buffer>;
-    inline void attach(Rdb* rdb) {
-        _rd = nullptr;
-        _rdb = rdb;
-    }
-
-    inline size_t read(uint8_t* data, size_t capacity) override {
-        if (_rdb)
-            return _rdb->read(data, capacity);
-        else if (_rd)
-            return _rd->read(data, capacity);
-        return 0;
-    }
-
-    inline size_t seek(pos_t pos) override {
-        if (_rdb)
-            return _rdb->seek(pos);
-        else if (_rd)
-            return _rd->seek(pos);
-        return 0;
-    }
-
-    inline size_t pos() const override {
-        if (_rdb)
-            return _rdb->pos();
-        else if (_rd)
-            return _rd->pos();
-        return 0;
-    }
-
-    inline size_t offset(pos_t ofs) override
-    {
-        if (_rd) return _rd->offset(ofs);
-        else if (_rdb) return _rdb->offset(ofs);
-        return 0;
-    }
-
-    template<typename T>
-    inline size_t read(T* data, size_t size)
-    {
-        return read((uint8_t*)data, size);
-    }
-private:
-    Rd* _rd = nullptr;
-    Rdb* _rdb = nullptr;
-};
 
 template<class Rd>
 static inline bool load(Text& that, Rd& _rd)
@@ -451,21 +507,22 @@ bool Text::save(const char* filename, bool compress)
 {
     std::ofstream fo(filename,std::ios::binary);
     if(!fo.is_open()) return false;
+    ck::writer wt(&fo);
 
     // 写入"文件标签"和"压缩标志"
-    fo.write("CKT",3);
-    fo.write((char*)&compress,1);
+    wt.write("CKT",3);
+    wt.write(&compress,1);
 
     // 写属性个数
     auto sz_attr = _prop.size();
-    fo.write((char*)&sz_attr,4);
+    wt.write(&sz_attr,4);
     if(empty())
     {
         // 写组个数
         int sz_group = 0;
-        fo.write((char*)&sz_group,4);
+        wt.write(&sz_group,4);
         // 写属性
-        write(fo,_prop);
+        write(wt,_prop);
         fo.close();
         return true;
     }
@@ -475,7 +532,7 @@ bool Text::save(const char* filename, bool compress)
         auto sz_group = (int)_map.size();
         fo.write((char*)&sz_group,4);
         // 写属性
-        write(fo,_prop);
+        write(wt,_prop);
     }
 
     size_t sz_name = 0;
@@ -484,19 +541,19 @@ bool Text::save(const char* filename, bool compress)
     {
         // 写组名
         sz_name = (int)it.first.size();
-        fo.write((char*)&sz_name,1);
-        fo.write(it.first.c_str(),sz_name);
+        wt.write(&sz_name,1);
+        wt.write(it.first.c_str(),sz_name);
 
         auto& attr = it.second._prop;
         // 写属性个数
         sz_attr = attr.size();
-        fo.write((char*)&sz_attr,4);
+        wt.write(&sz_attr,4);
         // 写翻译个数
         auto& map = it.second._map;
         sz_item = map.size();
-        fo.write((char*)&sz_item,4);
+        wt.write(&sz_item,4);
         // 写属性
-        write(fo,attr);
+        write(wt,attr);
         // 写翻译项
         for(auto& it : map)
         {
