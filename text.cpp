@@ -21,70 +21,76 @@
 #include <filesystem>
 #include <lz4xx.h>
 
-using namespace ck;
 namespace fs = std::filesystem;
-
-using u8str = Text::u8str;
-using u32str = Text::u32str;
-
 constexpr auto L10KB = 10485760;
 
 template<typename C>
 inline size_t length(const C* str)
 { return std::char_traits<C>::length(str); }
 
-int read_str(std::ifstream& fi,std::string& out)
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+/// Text
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+
+namespace ck
+{
+using namespace ck::bio;
+
+using u8str = Text::u8str;
+using u32str =  Text::u32str;
+
+int read_str(ireader& rd, std::string& out)
 {
     int sz = 0;
-    fi.read((char*)&sz,4);
-    if(sz < 1 || sz > L10KB)    // 字符串长度不能超过10KB
+    rd.read((uint8_t*)&sz, 4);
+    if (sz < 1 || sz > L10KB)    // 字符串长度不能超过10KB
         return 0;
     out.resize(sz);
     int pos = 0;
     int remain = sz;
-    while(remain > 0)
+    while (remain > 0)
     {
-        if(remain > 1024)
-            fi.read(out.data()+pos,1024);
+        if (remain > 1024)
+            rd.read((uint8_t*)out.data() + pos, 1024);
         else
-            fi.read(out.data()+pos,remain);
+            rd.read((uint8_t*)out.data() + pos, remain);
         pos += 1024;
         remain -= 1024;
     }
     return sz;
 }
 
-bool read(std::ifstream& fi,Text::Property& o)
+bool read(ireader& rd, Text::Property& o)
 {
-    auto read_str = [&fi](std::string& out,int max_size) -> int{
+    auto read_str = [&rd](std::string& out, int max_size) -> int {
         int sz = 0;
-        fi.read((char*)&sz,1);
-        if(sz < 1 || sz > max_size)
+        rd.read((uint8_t*)&sz, 1);
+        if (sz < 1 || sz > max_size)
             return -1;
         out.resize(sz);
-        fi.read(out.data(),sz);
+        rd.read((uint8_t*)out.data(), sz);
         return sz;
     };
 
     // 读类型
     var::Type type = var::TP_NUL;
-    fi.read((char*)&type,1);
+    rd.read((uint8_t*)&type, 1);
 
     // 是否在类型范围内, TP_NUL本就不该写入文件, 所以不考虑这个类型
-    if(type < var::TP_BOOL || type > var::TP_STRING)
+    if (type < var::TP_BOOL || type > var::TP_STRING)
     {
         std::cerr << "Text::Property::read: illegal type was discovered! skiped." << std::endl;
-        fi.seekg(-1,fi.cur);
+        rd.offset(-1);
         return false;
     }
 
     // 读名称
     std::string name;
-    auto sz_name = read_str(name,64);
-    if(sz_name < 0)
+    auto sz_name = read_str(name, 64);
+    if (sz_name < 0)
     {
         std::cerr << "Text::Attribute::read: illegal name length, it's must be (> 0 and <= 64)! skiped." << std::endl;
-        fi.seekg(-2,fi.cur);
+        rd.offset(-2);
         return false;
     }
 
@@ -92,35 +98,35 @@ bool read(std::ifstream& fi,Text::Property& o)
     case var::TP_BOOL:
     {
         bool v = 0;
-        fi.read((char*)&v,1);
-        o.set(name.c_str(),v);
+        rd.read((uint8_t*)&v, 1);
+        o.set(name.c_str(), v);
     }
     break;
     case var::TP_INT:
     {
         int v = 0;
-        fi.read((char*)&v,4);
-        o.set(name.c_str(),v);
+        rd.read((uint8_t*)&v, 4);
+        o.set(name.c_str(), v);
     }
     break;
     case var::TP_FLOAT:
     {
         float v = 0;
-        fi.read((char*)&v,4);
-        o.set(name.c_str(),v);
+        rd.read((uint8_t*)&v, 4);
+        o.set(name.c_str(), v);
     }
     break;
     case var::TP_STRING:
     {
         std::string v;
-        uint8_t sz_str = read_str(v,255);     // 字符串值的长度不超过255字节
-        if(sz_str < 0)
+        uint8_t sz_str = read_str(v, 255);     // 字符串值的长度不超过255字节
+        if (sz_str < 0)
         {
             std::cerr << "Text::Attribute::read: illegal string length, it's must be (> 0 and <= 255)! skiped." << std::endl;
-            fi.seekg(-3-sz_name,fi.cur);
+            rd.offset(-3 - sz_name);
             return false;
         }
-        o.set(name.c_str(),v);
+        o.set(name.c_str(), v);
     }
     break;
     default: break;
@@ -128,27 +134,27 @@ bool read(std::ifstream& fi,Text::Property& o)
     return true;
 }
 
-void write(std::ofstream& fo,const Text::Property& o)
+void write(std::ofstream& fo, const Text::Property& o)
 {
-    auto write_str = [&fo](const std::string& str){
+    auto write_str = [&fo](const std::string& str) {
         auto sz = (int)str.size();
-        fo.write((char*)&sz,1);
-        fo.write(str.c_str(),sz);
+        fo.write((char*)&sz, 1);
+        fo.write(str.c_str(), sz);
     };
 
-    for(auto& it : o)
+    for (auto& it : o)
     {
         const auto type = it.second.type();
-        if(type == var::TP_NUL)
+        if (type == var::TP_NUL)
             continue;
         // 写类型
-        fo.write((char*)&type,1);
+        fo.write((char*)&type, 1);
 
         // 检查名称长度, 超长忽略
         const auto& name = it.first;
-        if(name.empty() || name.size() > 64)
+        if (name.empty() || name.size() > 64)
         {
-            fo.seekp(-1,std::ios::cur);
+            fo.seekp(-1, std::ios::cur);
             return;
         }
         // 写名称
@@ -157,19 +163,19 @@ void write(std::ofstream& fo,const Text::Property& o)
         case var::TP_BOOL:
         {
             bool v = it.second;
-            fo.write((char*)&v,1);
+            fo.write((char*)&v, 1);
         }
         break;
         case var::TP_INT:
         {
             int v = it.second;
-            fo.write((char*)&v,4);
+            fo.write((char*)&v, 4);
         }
         break;
         case var::TP_FLOAT:
         {
             float v = it.second;
-            fo.write((char*)&v,4);
+            fo.write((char*)&v, 4);
         }
         break;
         case var::TP_STRING:
@@ -181,34 +187,6 @@ void write(std::ofstream& fo,const Text::Property& o)
         }
     }
 }
-
-// 在析构时删除目标文件
-struct temp_guard
-{
-    temp_guard() = default;
-    inline temp_guard(const std::string& path)
-        : _path(path)
-    {}
-
-    inline ~temp_guard()
-    {
-        if(!_path.empty())
-        {
-            std::error_code ec;
-            fs::remove(_path,ec);
-        }
-    }
-
-    inline void set(const std::string& path)
-    { _path = path; }
-private:
-    std::string _path;
-};
-
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-/// Text
-//////////////////////////////////////////////////////////////////////////////////////////////////////
 
 Text::Text()
 {
@@ -279,65 +257,94 @@ void CKT_CALL Text::u16to32(u16str in, std::u32string &out)
     __u16to32<char16_t>(in, out);
 }
 
-bool Text::open(const char* filename)
+template<typename Rd>
+struct reader : bio::ireader
 {
-    clear();
-    std::string path(filename);
-    std::ifstream fi(path,std::ios::binary);
-    if(!fi.is_open()) return false;
+    inline reader(Rd* rd) :
+        _rd(rd),
+        _rdb(nullptr)
+    {
+    }
 
+    using Rdb = bio::reader<bio::Buffer>;
+    inline void attach(Rdb* rdb) {
+        _rd = nullptr;
+        _rdb = rdb;
+    }
+
+    inline size_t read(uint8_t* data, size_t capacity) override {
+        if (_rdb)
+            return _rdb->read(data, capacity);
+        else if (_rd)
+            return _rd->read(data, capacity);
+        return 0;
+    }
+
+    inline size_t seek(pos_t pos) override {
+        if (_rdb)
+            return _rdb->seek(pos);
+        else if (_rd)
+            return _rd->seek(pos);
+        return 0;
+    }
+
+    inline size_t pos() const override {
+        if (_rdb)
+            return _rdb->pos();
+        else if (_rd)
+            return _rd->pos();
+        return 0;
+    }
+
+    inline size_t offset(pos_t ofs) override
+    {
+        if (_rd) return _rd->offset(ofs);
+        else if (_rdb) return _rdb->offset(ofs);
+        return 0;
+    }
+
+    template<typename T>
+    inline size_t read(T* data, size_t size)
+    {
+        return read((uint8_t*)data, size);
+    }
+private:
+    Rd* _rd = nullptr;
+    Rdb* _rdb = nullptr;
+};
+
+template<class Rd>
+static inline bool load(Text& that, Rd& _rd)
+{
+    ck::reader<Rd> rd(&_rd);
     // 读取文件标签和压缩标志
     bool compressed = true;
     char tag[3];
-    fi.read(tag,3);
-    fi.read((char*)&compressed,1);
+    rd.read(tag,3);
+    rd.read(&compressed,1);
     if(strncmp(tag,"CKT",3) != 0)
     {
         std::cerr << "Text::open: illegal file tag! skiped." << std::endl;
-        fi.seekg(-3,fi.cur);
+        rd.offset(-3);
         return false;
     }
 
-    temp_guard tg;
-    // 解压到临时文件再读回来
-    if(compressed)
+    buffer_t buf;
+    lz4xx::reader_buffer rdb(&buf);
+    if (compressed)
     {
-        path.append(".dec");
-        std::ofstream fo(path,std::ios::binary);
-        if(!fo.is_open())
-        {
-            std::cerr << "Text::open: can't create dec file:" << path << std::endl;
-            return false;
-        }
-        tg.set(path);
-
-        lz4xx::progress pgs;
-        lz4xx::reader_stream rd(fi);
-        lz4xx::writer_stream wt(fo);
-        if(!lz4xx::decompress(rd,wt,&pgs))
-        {
-            std::cerr << "Text::open: failed to write dec file:" << pgs.last_error << std::endl;
-            return false;
-        }
-        fi.close();
-        fi.open(path,std::ios::binary);
-        if(!fi.is_open())
-        {
-            std::cerr << "Text::open: can't open dec file:" << path << std::endl;
-            std::error_code ec;
-            fs::remove(path,ec);
-            return false;
-        }
+        lz4xx::writer_buffer wtb(buf);
+        lz4xx::decompress(rd, wtb);
+        rd.attach(&rdb);
     }
 
-    auto read_attr = [&fi](int sz,Property& attr){
+    auto read_attr = [&rd](int sz,Text::Property& attr){
         attr.clear();
         for(int i=0; i<sz; ++i)
         {
-            if(!read(fi,attr))  // 属性有误, 文件数据可能已被破坏
+            if(!read(rd,attr))  // 属性有误, 文件数据可能已被破坏
             {
                 attr.clear();
-                fi.close();
                 return false;
             }
         }
@@ -346,23 +353,23 @@ bool Text::open(const char* filename)
 
     // 读属性个数
     int sz_attr = 0;
-    fi.read((char*)&sz_attr,4);
+    rd.read(&sz_attr,4);
     // 读组个数
     int sz_group = 0;
-    fi.read((char*)&sz_group,4);
+    rd.read(&sz_group,4);
     // 读属性
-    if(!read_attr(sz_attr,_prop))
+    if(!read_attr(sz_attr,that._prop))
         return false;
 
     bool error = false;
     std::string name;
     std::string src;
-    Group group;
+    Text::Group group;
     for(int i=0; i<sz_group; ++i)
     {
         // 读组名
         int sz_name = 0;
-        fi.read((char*)&sz_name,1);
+        rd.read(&sz_name,1);
         if(sz_name < 0 || sz_name > 64)   // 组名最长64字节, 名称可以为空, 因为默认组没有名称
         {
             std::cerr << "Text::open: illegal group name length was discovered! suspended." << std::endl;
@@ -374,15 +381,15 @@ bool Text::open(const char* filename)
         else
         {
             name.resize(sz_name);
-            fi.read(name.data(),sz_name);
+            rd.read(name.data(),sz_name);
         }
 
         // 读属性个数
         int sz_attr = 0;
-        fi.read((char*)&sz_attr,4);
+        rd.read(&sz_attr,4);
         // 读翻译个数
         int sz_item = 0;
-        fi.read((char*)&sz_item,4);
+        rd.read(&sz_item,4);
         // 读属性
         if(!read_attr(sz_attr,group._prop))
             return false;
@@ -391,16 +398,17 @@ bool Text::open(const char* filename)
         auto& map = group._map;
         for(int j=0; j<sz_item; ++j)
         {
-            auto sz = read_str(fi,src);
+            auto sz = read_str(rd,src);
             if(sz < 1)  // 原文必须有长度
             {
                 error = true;
                 break;
             }
             auto& trs = map[src];
-            read_str(fi,trs);
+            read_str(rd,trs);
         }
 
+        auto& _map = that._map;
         auto iter = _map.find(name);
         if(iter == _map.end())  // 插入
             _map[name] = group;
@@ -414,14 +422,29 @@ bool Text::open(const char* filename)
 
         group.clear();
     }
-    fi.close();
     if(error)
     {
-        clear();
+        that.clear();
         return false;
     }
 
     return true;
+}
+
+bool Text::open(const char* filename)
+{
+    std::ifstream fi(filename, std::ios::binary);
+    if (!fi) return false;
+    auto rd = make_reader(fi);
+    auto ret = ck::load(*this, rd);
+    fi.close();
+    return ret;
+}
+
+bool ck::Text::load(const uint8_t* buf, size_t size)
+{
+    auto rd = make_reader(buf, size);
+    return ck::load(*this, rd);
 }
 
 bool Text::save(const char* filename, bool compress)
@@ -846,4 +869,6 @@ Text::Property::iterator Text::Property::begin() const
 Text::Property::iterator Text::Property::end() const
 {
     return _map.end();
+}
+
 }

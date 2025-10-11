@@ -94,6 +94,8 @@ struct Text
     private:
         Property _prop;
         container _map;
+        template<class Rd>
+        friend bool load(Text&, Rd&);
         friend struct Text;
     };
 
@@ -110,7 +112,10 @@ struct Text
     // UTF16-BE to UTF32-BE
     static void CKT_CALL u16to32(u16str, std::u32string& out);
 
+    // 打开ckt文件
     bool open(const char*);
+    // 从内存加载ckt数据
+    bool load(const uint8_t* buf, size_t size);
     bool save(const char*, bool compress = false);
 
     // 获取第一个匹配的译文
@@ -144,6 +149,8 @@ struct Text
     iterator end() const;
     iterator remove(iterator);
 private:
+    template<class Rd>
+    friend bool load(Text&, Rd&);
     Property _prop;
     container _map;
 };
