@@ -305,10 +305,10 @@ Text::Text()
     _map[""];
 }
 
-void CKT_CALL Text::u8to32(u8str in, std::u32string& out)
-{
-    auto sz_in = std::char_traits<char>::length(in);
+void CKT_CALL Text::u8to32(std::u32string& out, u8str in, int len) {
+    const auto sz_in = len <= 0 ? std::char_traits<char>::length(in) : len;
     out.clear();
+    if (sz_in < 1) return;
     out.reserve(sz_in);
     for (auto i = 0u;i < sz_in;)
     {
@@ -339,18 +339,46 @@ void CKT_CALL Text::u8to32(u8str in, std::u32string& out)
     out.shrink_to_fit();
 }
 
+void CKT_CALL ck::Text::u32to8(std::string& out, u32str in, int len) {
+    const auto sz_in = len <= 0 ? std::char_traits<char32_t>::length(in) : len;
+    out.clear();
+    out.reserve(sz_in * 3);
+    for (int i = 0;i < sz_in;++i) {
+        uint32_t c = in[i];
+        if (c <= 0x7F)  // 1 字节序列
+            out.push_back(uint8_t(c));
+        else if (c <= 0x7FF) {  // 2 字节序列
+            out.push_back(uint8_t(0xC0 | ((c >> 6) & 0x1F)));
+            out.push_back(uint8_t(0x80 | (c & 0x3F)));
+        }
+        else if (c <= 0xFFFF) {  // 3 字节序列
+            if (c >= 0xD800 && c <= 0xDFFF) // 跳过代理区
+                continue;
+            out.push_back(uint8_t(0xE0 | ((c >> 12) & 0x0F)));
+            out.push_back(uint8_t(0x80 | ((c >> 6) & 0x3F)));
+            out.push_back(uint8_t(0x80 | (c & 0x3F)));
+        }
+        else if (c <= 0x10FFFF) {  // 4 字节序列
+            out.push_back(uint8_t(0xF0 | ((c >> 18) & 0x07)));
+            out.push_back(uint8_t(0x80 | ((c >> 12) & 0x3F)));
+            out.push_back(uint8_t(0x80 | ((c >> 6) & 0x3F)));
+            out.push_back(uint8_t(0x80 | (c & 0x3F)));
+        }
+    }
+    out.shrink_to_fit();
+}
+
 template<typename C>
-void __u16to32(const C* in, std::u32string& out)
-{
-    auto sz_in = std::char_traits<C>::length(in);
+void __u16to32(std::u32string& out, const C* in, int len) {
+    const auto sz_in = len <= 0 ? std::char_traits<C>::length(in) : len;
     out.clear();
     out.reserve(sz_in);
     for (int i = 0;i < sz_in;++i)
     {
         char16_t c = in[i];
-        if (c < 0xD800)
+        if (c < 0xD800)  // 基本平面
             out.push_back(c);
-        else if (c <= 0xDBFF && i < sz_in - 1)
+        else if (c <= 0xDBFF && i < sz_in - 1)  // 是否是高位代理
         {
             char32_t c32 = ((uint32_t)c ^ 0xD800) << 10 | in[i + 1] ^ 0xDC00;
             out.push_back(c32);
@@ -359,14 +387,39 @@ void __u16to32(const C* in, std::u32string& out)
     }
 }
 
-void CKT_CALL Text::u16to32(wstr in, std::u32string &out)
-{
-    __u16to32<wchar_t>(in, out);
+void CKT_CALL Text::u16to32(std::u32string& out, wstr in, int len) {
+    __u16to32<wchar_t>(out, in, len);
 }
 
-void CKT_CALL Text::u16to32(u16str in, std::u32string &out)
-{
-    __u16to32<char16_t>(in, out);
+void CKT_CALL Text::u16to32(std::u32string& out, u16str in, int len) {
+    __u16to32<char16_t>(out, in, len);
+}
+
+template<typename C>
+void __u32to16(std::basic_string<C>& out, const char32_t* in, int len) {
+    const auto sz_in = len <= 0 ? std::char_traits<char32_t>::length(in) : len;
+    out.clear();
+    out.reserve(sz_in);
+    for (int i = 0; i < sz_in; ++i)
+    {
+        uint32_t c = in[i];
+        if (c < 0xD800) // 基本平面有效
+            out.push_back(c);
+        else if ((c >> 16) <= 0xDBFF)   // 高位代理有效
+        {
+            uint32_t s = c - 0x10000;
+            out.push_back((s >> 10) + 0xD800);   // 高位代理: 0x00000-0x3FFFF -> 0-0x3FF
+            out.push_back((s & 0x3FF) + 0xDC00); // 低位代理
+        }
+    }
+}
+
+void CKT_CALL ck::Text::u32to16(std::wstring& out, u32str in, int len) {
+    __u32to16<wchar_t>(out, in, len);
+}
+
+void CKT_CALL ck::Text::u32to16(std::u16string& out, u32str in, int len) {
+    __u32to16<char16_t>(out, in, len);
 }
 
 template<class Rd>
@@ -656,9 +709,9 @@ u32str Text::u32(u8str src,u8str def) const
         if(trs)
         {
             if(trs == g_empty)  // 说明原文存在但译文不存在
-                u8to32(def, u32str);
+                u8to32(u32str, def);
             else
-                u8to32(trs, u32str);
+                u8to32(u32str, trs);
             return u32str.c_str();
         }
     }
@@ -828,9 +881,9 @@ Text::u32str Text::Group::u32(u8str src,u8str def) const
         return nullptr;
     const auto& trs = iter->second;
     if(trs.empty()) // 译文为空则返回def
-        u8to32(def, u32str);
+        u8to32(u32str, def);
     else
-        u8to32(trs.c_str(), u32str);
+        u8to32(u32str, trs.c_str());
     return u32str.c_str();
 }
 

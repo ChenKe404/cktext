@@ -108,11 +108,23 @@ struct Text
     Text(const Text&) = delete;
 
     // UTF8 to UTF32-BE
-    static void CKT_CALL u8to32(u8str,std::u32string& out);
+    // @param len 输入字符串的长度, 为0则按\0结尾计算 
+    static void CKT_CALL u8to32(std::u32string& out, u8str in, int len = 0);
+    // UTF32-BE to UTF8
+    // @param len 输入字符串的长度, 为0则按\0结尾计算 
+    static void CKT_CALL u32to8(std::string& out, u32str in, int len = 0);
     // UTF16-BE to UTF32-BE
-    static void CKT_CALL u16to32(wstr, std::u32string& out);
+    // @param len 输入字符串的长度, 为0则按\0结尾计算 
+    static void CKT_CALL u16to32(std::u32string& out, wstr in, int len = 0);
     // UTF16-BE to UTF32-BE
-    static void CKT_CALL u16to32(u16str, std::u32string& out);
+    // @param len 输入字符串的长度, 为0则按\0结尾计算 
+    static void CKT_CALL u16to32(std::u32string& out, u16str in, int len = 0);
+    // UTF32-BE to UTF16-BE
+    // @param len 输入字符串的长度, 为0则按\0结尾计算 
+    static void CKT_CALL u32to16(std::wstring& out, u32str in, int len = 0);
+    // UTF32-BE to UTF16-BE
+    // @param len 输入字符串的长度, 为0则按\0结尾计算 
+    static void CKT_CALL u32to16(std::u16string& out, u32str in, int len = 0);
 
     // 打开ckt文件
     bool open(const char*);
