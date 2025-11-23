@@ -639,7 +639,7 @@ u8str Text::u8(u8str src,u8str def) const
                 return trs;
         }
     }
-    return nullptr;
+    return def;
 }
 
 u32str Text::u32(u8str src,u8str def) const
