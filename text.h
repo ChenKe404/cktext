@@ -26,6 +26,7 @@
  * 文本翻译管理类, 原文和译文均使用utf-8编码
  */
 
+#include <vector>
 #include <map>
 #include <string>
 #include <var.hpp>
@@ -94,6 +95,7 @@ struct Text
     private:
         Property _prop;
         container _map;
+        uint32_t _priority = 100;  // 优先级
         template<class Rd>
         friend bool load(Text&, Rd&);
         friend struct Text;
@@ -149,10 +151,13 @@ struct Text
     iterator end() const;
     iterator remove(iterator);
 private:
+    void update_sorted();
+private:
     template<class Rd>
     friend bool load(Text&, Rd&);
     Property _prop;
     container _map;
+    std::vector<Group*> _sorted;
 };
 
 }

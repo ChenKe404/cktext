@@ -449,6 +449,12 @@ static inline bool load(Text& that, Rd& _rd)
         // 读属性
         if(!read_attr(sz_attr,group._prop))
             return false;
+        // 读取组的优先级
+        auto var = group._prop.get("priority");
+        if(var.type() == var::TP_INT)
+            group._priority = (int)var;
+        if(group._priority < 0)
+            group._priority = 0;
 
         // 读取翻译项
         auto& map = group._map;
@@ -467,7 +473,7 @@ static inline bool load(Text& that, Rd& _rd)
         auto& _map = that._map;
         auto iter = _map.find(name);
         if(iter == _map.end())  // 插入
-            _map[name] = group;
+            _map[name] = std::move(group);
         else    // 合并到已存在的组
         {
             for(auto& it : group)
@@ -494,13 +500,16 @@ bool Text::open(const char* filename)
     auto rd = make_reader(fi);
     auto ret = ck::load(*this, rd);
     fi.close();
+    update_sorted();
     return ret;
 }
 
 bool ck::Text::load(const uint8_t* buf, size_t size)
 {
     auto rd = make_reader(buf, size);
-    return ck::load(*this, rd);
+    auto ret = ck::load(*this, rd);
+    update_sorted();
+    return ret;
 }
 
 bool Text::save(const char* filename, bool compress)
@@ -619,9 +628,9 @@ u8str Text::u8(u8str src,u8str def) const
 {
     if(!src) return nullptr;
     u8str trs = nullptr;
-    for(auto& it : _map)
+    for(auto& it : _sorted)
     {
-        trs = it.second.u8(src,g_empty);
+        trs = it->u8(src,g_empty);
         if(trs)
         {
             if(trs == g_empty)  // 说明原文存在但译文不存在
@@ -641,9 +650,9 @@ u32str Text::u32(u8str src,u8str def) const
     std::lock_guard<std::mutex> lock(mtx);
 
     u8str trs = nullptr;
-    for(auto& it : _map)
+    for(auto& it : _sorted)
     {
-        trs = it.second.u8(src,g_empty);
+        trs = it->u8(src,g_empty);
         if(trs)
         {
             if(trs == g_empty)  // 说明原文存在但译文不存在
@@ -722,6 +731,7 @@ void Text::clear()
         i = _map.erase(i);
     }
     _map.begin()->second.clear();
+    update_sorted();
 }
 
 void Text::remove(const char *group)
@@ -736,11 +746,14 @@ void Text::remove(const char *group)
         if(iter != _map.end())
             iter->second.clear();
     }
+    update_sorted();
 }
 
 Text::iterator Text::remove(iterator it)
 {
-    return _map.erase(it);
+    auto ret = _map.erase(it);
+    update_sorted();
+    return ret;
 }
 
 Text::Group* Text::insert(const char *group, const Property& prop)
@@ -758,8 +771,15 @@ Text::Group* Text::insert(const char *group, const Property& prop)
         std::cerr << "Text::insert: can't inserted. maybe already have same name group!" << std::endl;
         return nullptr;
     }
-    ret.first->second._prop = prop;
-    return &ret.first->second;
+    auto& grp = ret.first->second;
+    grp._prop = prop;
+    auto var = prop.get("priority");
+    if(var.type() == var::TP_INT)
+        grp._priority = (int)var;
+    if(grp._priority < 0)
+        grp._priority = 0;
+    update_sorted();
+    return &grp;
 }
 
 Text::iterator Text::begin() const
@@ -772,6 +792,16 @@ Text::iterator Text::end() const
     return _map.end();
 }
 
+void Text::update_sorted()
+{
+    _sorted.clear();
+    for(auto& it : _map){
+        _sorted.push_back(&it.second);
+    }
+    std::sort(_sorted.begin(),_sorted.end(),[](Group* a,Group* b){
+        return a->_priority > b->_priority || (a->_priority == b->_priority && a < b);
+    });
+}
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////
 /// Text::Group
@@ -823,6 +853,7 @@ void Text::Group::clear()
 {
     _prop.clear();
     _map.clear();
+    _priority = 100;
 }
 
 void Text::Group::remove(u8str src)
